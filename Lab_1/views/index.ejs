@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Tasks</title>
+    </head>
+    <body>
+        <h1>My Tasks</h1>
+
+        <form method="POST" action="/add">
+            <input type="text" name="title" placeholder="New Task" required>
+            <input type="text" name="status" placeholder="Status" required>
+            <button type="submit">Add</button>
+        </form>
+
+        <ul>
+            <% tasks.forEach(task => { %>
+                <li><%= task.title %> (status: <%= task.status%>)</li>
+            <% }) %>
+        </ul>
+    </body>
+</html>
