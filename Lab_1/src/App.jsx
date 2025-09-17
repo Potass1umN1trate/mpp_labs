@@ -1,6 +1,6 @@
 import TaskItem from "./TaskItem.jsx";
 
-export default function App({ tasks, filter, currentUrl }) {
+export default function App({ tasks, filter }) {
   return (
     <>
       <h1>My Tasks (React SSR)</h1>
