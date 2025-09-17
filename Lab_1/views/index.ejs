@@ -45,7 +45,7 @@
                                 <strong>Attachments:</strong>
                                 <ul>
                                     <% task.files.forEach(f => { %>
-                                        <li><a href="<%= f.path %>" target="_blank" rel="noreferrer"><%= f.originalName %></a></li>
+                                        <li><a href="<%= f.path %>" target="_blank" download="<%= f.originalName %>" rel="noreferrer"><%= f.originalName %></a></li>
                                     <% }) %>
                                 </ul>
                             </div>
