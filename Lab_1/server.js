@@ -1,3 +1,8 @@
+require("@babel/register")({ extensions: [".js", ".jsx"] });
+
+const React = require('react');
+const ReactDOMServer = require('react-dom/server');
+
 const express = require('express');
 const app = express();
 
@@ -12,7 +17,8 @@ app.use('/uploads', express.static(uploadDir));
 
 const upload = multer({dest: uploadDir, limits: { fileSize: 10 * 1024 * 1024, files: 5 }});
 
-app.set('view engine', 'ejs');
+//app.set('view engine', 'ejs');
+
 app.use(express.static('public'));
 
 app.use(express.urlencoded({extended: true}));
@@ -20,11 +26,36 @@ app.use(express.urlencoded({extended: true}));
 let tasks = [];
 let indexId = 1;
 
+// GET / for EJS
+// app.get('/', (req, res) => {
+//     const filter = req.query.status || 'all';
+//     const filtered = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
+//     res.render('index', {tasks: filtered, filter});
+// })
+
 app.get('/', (req, res) => {
-    const filter = req.query.status || 'all';
-    const filtered = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
-    res.render('index', {tasks: filtered, filter});
-})
+    const raw = req.query.status || 'all';
+    const allowed = new Set(['all', 'todo', 'inprogress', 'done']);
+    const filter = allowed.has(raw) ? raw : 'all';
+
+    const visible = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
+
+    const App = require("./src/App.jsx").default;
+    const html = ReactDOMServer.renderToString(React.createElement(App, {tasks: visible, filter}));
+
+    res.type("html").send(`<!DOCTYPE html>
+    <html lang="en">
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>Tasks (React SSR)</title>
+            <link rel="stylesheet" href="/public/style.css" />
+        </head>
+        <body>
+            <div class="container">${html}</div>
+        </body>
+    </html>`);
+});
 
 app.post('/add', upload.array('files'), (req, res) => {
     const {title, status, dueDate} = req.body;
