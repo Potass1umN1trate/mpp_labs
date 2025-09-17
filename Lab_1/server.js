@@ -10,7 +10,7 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 app.use('/uploads', express.static(uploadDir));
 
-const upload = multer({dest: uploadDir});
+const upload = multer({dest: uploadDir, limits: { fileSize: 10 * 1024 * 1024, files: 5 }});
 
 app.set('view engine', 'ejs');
 app.use(express.static('public'));
@@ -26,16 +26,43 @@ app.get('/', (req, res) => {
     res.render('index', {tasks: filtered, filter});
 })
 
-app.post('/add', (req, res) => {
+app.post('/add', upload.array('files'), (req, res) => {
     const {title, status, dueDate} = req.body;
     if (title && title.trim() !== ''){
+        const files = (req.files || []).map(f => ({
+            originalName: f.originalname,
+            filename: f.filename,
+            path: `/uploads/${f.filename}`,
+            mimetype: f.mimetype,
+            size: f.size
+        }))
+
         tasks.push({
             id: indexId++,
             title: title.trim(),
             status: status || 'todo',
-            dueDate: dueDate || ''
+            dueDate: dueDate || '',
+            files
         })
     }
+    res.redirect('/');
+})
+
+app.post('/attach', upload.array('files'), (req, res) => {
+    const id = Number(req.body.id);
+    const task = tasks.find(t => t.id === id);
+
+    if (task && req.files){
+        task.files = task.files;
+        task.files.push(...req.files.map(f => ({
+            originalName: f.originalname,
+            filename: f.filename,
+            path: `/uploads/${f.filename}`,
+            mimetype: f.mimetype,
+            size: f.size
+        })))
+    }
+
     res.redirect('/');
 })
 
