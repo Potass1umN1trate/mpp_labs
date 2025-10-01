@@ -102,7 +102,6 @@ app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
   res.status(200).json({ files: task.files });
 });
 
-// GET /api/tasks/:id/files/:fileId/download — download with original filename
 app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const task = findTask(id);
@@ -114,11 +113,8 @@ app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
   res.download(path.join(uploadDir, f.filename), f.originalname);
 });
 
-/* ---------- SPA fallback ---------- */
-// Serve SPA for root and all paths not starting with /api
 app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
-/* ---------- Start ---------- */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`http://localhost:${PORT}`));

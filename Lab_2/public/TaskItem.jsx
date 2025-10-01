@@ -1,5 +1,3 @@
-/* TaskItem component: expects props { task, onUpdate, onDelete, onAttach } */
-
 function TaskItem({ task, onUpdate, onDelete, onAttach }) {
   const [status, setStatus] = React.useState(task.status);
   const [dueDate, setDueDate] = React.useState(task.dueDate || "");
