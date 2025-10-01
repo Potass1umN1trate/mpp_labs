@@ -1,120 +1,136 @@
-require("@babel/register")({ extensions: [".js", ".jsx"] });
-
-const React = require('react');
-const ReactDOMServer = require('react-dom/server');
-
 const express = require('express');
-const app = express();
-
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 
+const app = express();
+
+/* ---------- Parsers ---------- */
+// JSON bodies (application/json)
+app.use(express.json());
+
+/* ---------- Static ---------- */
+const publicDir = path.join(__dirname, 'public');
+app.use('/public', express.static(publicDir)); // CSS/JS SPA
+
+/* ---------- Uploads ---------- */
 const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+app.use('/uploads', express.static(uploadDir)); // public access to uploaded files
 
-app.use('/uploads', express.static(uploadDir));
-
-const upload = multer({dest: uploadDir, limits: { fileSize: 10 * 1024 * 1024, files: 5 }});
-
-//app.set('view engine', 'ejs');
-
-app.use(express.static('public'));
-
-app.use(express.urlencoded({extended: true}));
-
-let tasks = [];
-let indexId = 1;
-
-// GET / for EJS
-// app.get('/', (req, res) => {
-//     const filter = req.query.status || 'all';
-//     const filtered = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
-//     res.render('index', {tasks: filtered, filter});
-// })
-
-app.get('/', (req, res) => {
-    const raw = req.query.status || 'all';
-    const allowed = new Set(['all', 'todo', 'inprogress', 'done']);
-    const filter = allowed.has(raw) ? raw : 'all';
-
-    const visible = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
-
-    const App = require("./src/App.jsx").default;
-    const html = ReactDOMServer.renderToString(React.createElement(App, {tasks: visible, filter}));
-
-    res.type("html").send(`<!DOCTYPE html>
-    <html lang="en">
-        <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width,initial-scale=1" />
-            <title>Tasks (React SSR)</title>
-            <link rel="stylesheet" href="/public/style.css" />
-        </head>
-        <body>
-            <div class="container">${html}</div>
-        </body>
-    </html>`);
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 10 * 1024 * 1024, files: 8 } // 10MB/file, up to 8 files at once
 });
 
-app.post('/add', upload.array('files'), (req, res) => {
-    const {title, status, dueDate} = req.body;
-    if (title && title.trim() !== ''){
-        const files = (req.files || []).map(f => ({
-            originalName: f.originalname,
-            filename: f.filename,
-            path: `/uploads/${f.filename}`,
-            mimetype: f.mimetype,
-            size: f.size
-        }))
+/* ---------- In-memory "database" ---------- */
+// Task: { id, title, status, dueDate, files: FileMeta[] }
+// FileMeta: { id, originalname, filename, path, mimetype, size }
+let tasks = [];
+let nextId = 1;
 
-        tasks.push({
-            id: indexId++,
-            title: title.trim(),
-            status: status || 'todo',
-            dueDate: dueDate || '',
-            files
-        })
-    }
-    res.redirect('/');
-})
+const ALLOWED_STATUS = new Set(['todo', 'inprogress', 'done']);
+const OK_FILTER = new Set(['all', ...ALLOWED_STATUS]);
 
-app.post('/attach', upload.array('files'), (req, res) => {
-    const id = Number(req.body.id);
-    const task = tasks.find(t => t.id === id);
+const toFileMeta = (f) => ({
+  id: f.filename,                       // file id = saved filename
+  originalname: f.originalname,         // original name for display/download
+  filename: f.filename,                 // saved on disk
+  path: `/uploads/${f.filename}`,       // URL for preview
+  mimetype: f.mimetype,
+  size: f.size
+});
 
-    if (task && req.files){
-        task.files = task.files;
-        task.files.push(...req.files.map(f => ({
-            originalName: f.originalname,
-            filename: f.filename,
-            path: `/uploads/${f.filename}`,
-            mimetype: f.mimetype,
-            size: f.size
-        })))
-    }
+const findTask = (id) => tasks.find(t => t.id === id);
 
-    res.redirect('/');
-})
+/* ---------- REST API ---------- */
 
-app.post('/update', (req, res) => {
-    const id = Number(req.body.id);
-    const {status, dueDate} = req.body;
+// GET /api/tasks?status=all|todo|inprogress|done — list
+app.get('/api/tasks', (req, res) => {
+  const raw = (req.query.status || 'all').toLowerCase();
+  const filter = OK_FILTER.has(raw) ? raw : 'all';
+  const list = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
+  res.status(200).json(list);
+});
 
-    const task = tasks.find(t => t.id === id);
-    if (task){
-        if (status) task.status = status;
-        task.dueDate = (dueDate ?? '').trim();  
-    }
+// GET /api/tasks/:id — single task
+app.get('/api/tasks/:id', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const task = findTask(id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  res.status(200).json(task);
+});
 
-    res.redirect('/');
-})
+// POST /api/tasks — create (supports JSON OR multipart with files[])
+app.post('/api/tasks', upload.array('files'), (req, res) => {
+  const title = (req.body.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'title is required' });
 
-app.post('/delete', (req, res) => {
-    const id = Number(req.body.id);
-    tasks = tasks.filter(t => t.id !== id);
-    res.redirect('/');
-})
+  const status = ALLOWED_STATUS.has(req.body.status) ? req.body.status : 'todo';
+  const dueDate = typeof req.body.dueDate === 'string' ? req.body.dueDate.trim() : '';
 
+  const files = (req.files ?? []).map(toFileMeta);
+
+  const task = { id: nextId++, title, status, dueDate, files };
+  tasks.push(task);
+
+  res.set('Location', `/api/tasks/${task.id}`);
+  res.status(201).json(task); // 201 Created
+});
+
+// PUT /api/tasks/:id — update (JSON)
+app.put('/api/tasks/:id', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const task = findTask(id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { title, status, dueDate } = req.body || {};
+  if (typeof title === 'string' && title.trim()) task.title = title.trim();
+  if (typeof status === 'string' && ALLOWED_STATUS.has(status)) task.status = status;
+  if (typeof dueDate === 'string') task.dueDate = dueDate.trim();
+
+  res.status(200).json(task);
+});
+
+// DELETE /api/tasks/:id — delete
+app.delete('/api/tasks/:id', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const exists = tasks.some(t => t.id === id);
+  if (!exists) return res.status(404).json({ error: 'Task not found' });
+  tasks = tasks.filter(t => t.id !== id);
+  res.status(204).end(); // No Content
+});
+
+// POST /api/tasks/:id/files — attach files (multipart)
+app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const task = findTask(id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const more = (req.files ?? []).map(toFileMeta);
+  task.files = task.files || [];
+  task.files.push(...more);
+
+  res.status(200).json({ files: task.files });
+});
+
+// GET /api/tasks/:id/files/:fileId/download — download with original filename
+app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const task = findTask(id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const f = (task.files || []).find(x => x.id === req.params.fileId);
+  if (!f) return res.status(404).json({ error: 'File not found' });
+
+  res.download(path.join(uploadDir, f.filename), f.originalname);
+});
+
+/* ---------- SPA fallback ---------- */
+// Serve SPA for root and all paths not starting with /api
+app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+
+/* ---------- Start ---------- */
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`http://loacalhost:${PORT}`))
+app.listen(PORT, () => console.log(`http://localhost:${PORT}`));

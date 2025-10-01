@@ -1,8 +1,3 @@
-require("@babel/register")({ extensions: [".js", ".jsx"] });
-
-const React = require('react');
-const ReactDOMServer = require('react-dom/server');
-
 const express = require('express');
 const app = express();
 
@@ -33,7 +28,7 @@ let indexId = 1;
 //     res.render('index', {tasks: filtered, filter});
 // })
 
-app.get('/', (req, res) => {
+app.get('/api/tasks', (req, res) => {
     const raw = req.query.status || 'all';
     const allowed = new Set(['all', 'todo', 'inprogress', 'done']);
     const filter = allowed.has(raw) ? raw : 'all';
@@ -43,18 +38,7 @@ app.get('/', (req, res) => {
     const App = require("./src/App.jsx").default;
     const html = ReactDOMServer.renderToString(React.createElement(App, {tasks: visible, filter}));
 
-    res.type("html").send(`<!DOCTYPE html>
-    <html lang="en">
-        <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width,initial-scale=1" />
-            <title>Tasks (React SSR)</title>
-            <link rel="stylesheet" href="/public/style.css" />
-        </head>
-        <body>
-            <div class="container">${html}</div>
-        </body>
-    </html>`);
+    res.t
 });
 
 app.post('/add', upload.array('files'), (req, res) => {
