@@ -74,7 +74,6 @@ function TaskItem({ task, onUpdate, onDelete, onAttach }) {
   );
 }
 
-/* simple helper is shared; define globally so app.jsx can use it too */
 function labelStatus(s) {
   switch (s) {
     case "todo": return "To do";
@@ -84,5 +83,4 @@ function labelStatus(s) {
   }
 }
 
-/* expose TaskItem globally so app.jsx can reference it */
 window.TaskItem = TaskItem;

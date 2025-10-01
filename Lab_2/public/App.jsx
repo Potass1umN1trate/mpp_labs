@@ -1,7 +1,5 @@
-/* Root SPA (no imports/exports; uses global window.TaskItem) */
 const { useState, useEffect, useRef } = React;
 
-/* small fetch helper */
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   if (res.status === 204) return null;

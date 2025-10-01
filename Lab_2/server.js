@@ -5,27 +5,20 @@ const multer = require('multer');
 
 const app = express();
 
-/* ---------- Parsers ---------- */
-// JSON bodies (application/json)
 app.use(express.json());
 
-/* ---------- Static ---------- */
 const publicDir = path.join(__dirname, 'public');
-app.use('/public', express.static(publicDir)); // CSS/JS SPA
+app.use('/public', express.static(publicDir));
 
-/* ---------- Uploads ---------- */
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-app.use('/uploads', express.static(uploadDir)); // public access to uploaded files
+app.use('/uploads', express.static(uploadDir)); 
 
 const upload = multer({
   dest: uploadDir,
-  limits: { fileSize: 10 * 1024 * 1024, files: 8 } // 10MB/file, up to 8 files at once
+  limits: { fileSize: 10 * 1024 * 1024, files: 8 }
 });
 
-/* ---------- In-memory "database" ---------- */
-// Task: { id, title, status, dueDate, files: FileMeta[] }
-// FileMeta: { id, originalname, filename, path, mimetype, size }
 let tasks = [];
 let nextId = 1;
 
@@ -33,19 +26,16 @@ const ALLOWED_STATUS = new Set(['todo', 'inprogress', 'done']);
 const OK_FILTER = new Set(['all', ...ALLOWED_STATUS]);
 
 const toFileMeta = (f) => ({
-  id: f.filename,                       // file id = saved filename
-  originalname: f.originalname,         // original name for display/download
-  filename: f.filename,                 // saved on disk
-  path: `/uploads/${f.filename}`,       // URL for preview
+  id: f.filename,                       
+  originalname: f.originalname,         
+  filename: f.filename,                 
+  path: `/uploads/${f.filename}`,       
   mimetype: f.mimetype,
   size: f.size
 });
 
 const findTask = (id) => tasks.find(t => t.id === id);
 
-/* ---------- REST API ---------- */
-
-// GET /api/tasks?status=all|todo|inprogress|done — list
 app.get('/api/tasks', (req, res) => {
   const raw = (req.query.status || 'all').toLowerCase();
   const filter = OK_FILTER.has(raw) ? raw : 'all';
@@ -53,7 +43,6 @@ app.get('/api/tasks', (req, res) => {
   res.status(200).json(list);
 });
 
-// GET /api/tasks/:id — single task
 app.get('/api/tasks/:id', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const task = findTask(id);
@@ -61,7 +50,6 @@ app.get('/api/tasks/:id', (req, res) => {
   res.status(200).json(task);
 });
 
-// POST /api/tasks — create (supports JSON OR multipart with files[])
 app.post('/api/tasks', upload.array('files'), (req, res) => {
   const title = (req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'title is required' });
