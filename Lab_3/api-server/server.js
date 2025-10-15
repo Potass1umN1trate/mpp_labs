@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const cors = require('cors');
 
 const app = express();
 
@@ -35,6 +36,8 @@ const toFileMeta = (f) => ({
 });
 
 const findTask = (id) => tasks.find(t => t.id === id);
+
+app.use(cors());
 
 app.get('/api/tasks', (req, res) => {
   const raw = (req.query.status || 'all').toLowerCase();

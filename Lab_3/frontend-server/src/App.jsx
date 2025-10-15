@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import TaskItem from "./TaskItem.jsx";
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);

@@ -1,3 +1,5 @@
+import React from "react";
+
 export default function TaskItem({ task, onUpdate, onDelete, onAttach }) {
   const [status, setStatus] = React.useState(task.status);
   const [dueDate, setDueDate] = React.useState(task.dueDate || "");
@@ -55,7 +57,7 @@ export default function TaskItem({ task, onUpdate, onDelete, onAttach }) {
               <li key={f.id}>
                 <a href={f.path} target="_blank" rel="noreferrer">{f.originalname}</a>
                 {" "}•{" "}
-                <a href={`/api/tasks/${task.id}/files/${f.id}/download`} target="_blank" rel="noreferrer">
+                <a href={`http://localhost:3001/api/tasks/${task.id}/files/${f.id}/download`} target="_blank" rel="noreferrer">
                   download
                 </a>
                 {" "}({Math.ceil((f.size || 0) / 1024)} KB)
