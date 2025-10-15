@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Tasks</title>
+    </head>
+    <body>
+        <h1>My Tasks</h1>
+
+        <form method="GET" action="/">
+            <label>Filter by status:</label>
+            <select name="status">
+                <option value="all" <%= filter === "all" ? "selected" : "" %>>All</option>
+                <option value="todo" <%= filter === "todo" ? "selected" : "" %>>To do</option>
+                <option value="inprogress" <%= filter === "inprogress" ? "selected" : "" %>>In Progress</option>
+                <option value="done" <%= filter === "done" ? "selected" : "" %>>Done</option>
+            </select>
+            <button type="submit">Apply</button>
+        </form>
+
+        <form method="POST" action="/add" enctype="multipart/form-data" style="margin-top: 20px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" name="title" placeholder="New Task" required>
+            <select name="status">
+                <option value="todo">To do</option>
+                <option value="inprogress">In Progress</option>
+                <option value="done">Done</option>
+            </select>
+            <input type="date" name="dueDate" required>
+
+            <lable>Files:
+                <input type="file" name="files" multiple>
+            </lable>
+
+            <button type="submit">Add</button>
+        </form>
+
+        <ul>
+            <% tasks.forEach(task => { %>
+                <li style="margin: 10px 0; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                    <div>
+                        <strong><%= task.title %></strong>
+                        - status: <%= task.status %>
+                        - due: <%= task.dueDate || '-' %>
+                        <% if (task.files && task.files.length) { %>
+                            <div>
+                                <strong>Attachments:</strong>
+                                <ul>
+                                    <% task.files.forEach(f => { %>
+                                        <li><a href="<%= f.path %>" target="_blank" download="<%= f.originalName %>" rel="noreferrer"><%= f.originalName %></a></li>
+                                    <% }) %>
+                                </ul>
+                            </div>
+                        <% } %>
+                    </div>
+                    <!-- Edit Form -->
+                     <form method="POST" action="/update" style="margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <input type="hidden" name="id" value="<%= task.id %>">
+                        <label>
+                            Status:
+                            <select name="status">
+                                <option value="todo" <%= task.status === "todo" ? "selected" : "" %>>To do</option>
+                                <option value="inprogress" <%= task.status === "inprogress" ? "selected" : "" %>>In Progress</option>
+                                <option value="done" <%= task.status === "done" ? "selected" : "" %>>Done</option>
+                            </select>
+                        </label>
+
+                        <label>
+                            Due:
+                            <input type="date" name="dueDate" value="<%= task.dueDate %>">
+                        </label>
+
+                        <button type="submit" style="background-color: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Update</button>
+                    </form>
+
+                    <form method="POST" action="/attach" enctype="multipart/form-data" style="margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <input type="hidden" name="id" value="<%= task.id %>">
+                        <label>
+                            Add files:
+                            <input type="file" name="files" multiple required>
+                        </label>
+                        <button type="submit" style="background-color: #008CBA; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Upload</button>
+                    </form>
+
+                    <!-- Delete Form -->
+                    <form method="POST" action="/delete" style="margin-top: 6px ;">
+                        <input type="hidden" name="id" value="<%= task.id %>">
+                        <button type="submit" style="background-color: #ff4d4d; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Delete</button>
+                    </form>
+                 </li>
+            <% }) %>
+        </ul>
+    </body>
+</html>
