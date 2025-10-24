@@ -148,7 +148,7 @@ button {
   padding: 10px 14px;
   font-weight: 600;
   background: var(--text);
-  color: #4a4a4a;
+  color: #585858;
   cursor: pointer;
   margin-top: var(--space-2);
   transition: transform 20ms ease, opacity var(--transition), background var(--transition), box-shadow var(--transition);

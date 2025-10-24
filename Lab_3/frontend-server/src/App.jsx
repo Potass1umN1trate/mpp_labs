@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import TaskItem from "./TaskItem.jsx";
+import TaskItem from "./TaskItem";
+
+// const { useState, useEffect, useRef } = React;
+const apiServer = "http://localhost:3001";
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -25,7 +28,7 @@ export default function App() {
 
   async function loadTasks() {
     const qs = encodeURIComponent(filter);
-    const list = await api(`http://localhost:3001/api/tasks?status=${qs}`);
+    const list = await api(`${apiServer}/api/tasks?status=${qs}`);
     setTasks(list);
   }
   useEffect(() => { loadTasks().catch(console.error); }, [filter]);
@@ -39,14 +42,14 @@ export default function App() {
     const files = createFilesRef.current?.files || [];
     for (const f of files) fd.append("files", f);
 
-    await api("http://localhost:3001/api/tasks", { method: "POST", body: fd });
+    await api(`${apiServer}/api/tasks`, { method: "POST", body: fd });
     setTitle(""); setStatus("todo"); setDueDate("");
     if (createFilesRef.current) createFilesRef.current.value = "";
     await loadTasks();
   }
 
   async function updateTask(id, update) {
-    await api(`http://localhost:3001/api/tasks/${id}`, {
+    await api(`${apiServer}/api/tasks/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update)
@@ -55,14 +58,14 @@ export default function App() {
   }
 
   async function deleteTask(id) {
-    await api(`http://localhost:3001/api/tasks/${id}`, { method: "DELETE" });
+    await api(`${apiServer}/api/tasks/${id}`, { method: "DELETE" });
     await loadTasks();
   }
 
   async function attachFiles(id, fileList) {
     const fd = new FormData();
     for (const f of fileList) fd.append("files", f);
-    await api(`http://localhost:3001/api/tasks/${id}/files`, { method: "POST", body: fd });
+    await api(`${apiServer}/api/tasks/${id}/files`, { method: "POST", body: fd });
     await loadTasks();
   }
 
@@ -125,3 +128,4 @@ export default function App() {
     </>
   );
 }
+
