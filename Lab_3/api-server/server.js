@@ -3,10 +3,18 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+
+const JWT_SECRET = process.env.JWT_SECRET || "change-me";
+const JWT_TTL = '1h';
+const COOKIE_NAME = 'JWT';
 
 const app = express();
 
 app.use(express.json());
+app.use(cookieParser());
 
 const publicDir = path.join(__dirname, 'public');
 app.use('/public', express.static(publicDir));
@@ -23,8 +31,25 @@ const upload = multer({
 let tasks = [];
 let nextId = 1;
 
+const users = new Map();
+(async () => {
+  const hash = await bcrypt.hash('admin', 10);
+  users.set('admin', { id: '1', username: 'admin', passwordHash: hash });
+  users.set('john', { id: '2', username: 'john', passwordHash: hash });
+})();
+
 const ALLOWED_STATUS = new Set(['todo', 'inprogress', 'done']);
 const OK_FILTER = new Set(['all', ...ALLOWED_STATUS]);
+
+function issueTokenCookie(res, payload) {
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL });
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: false,
+    samesite: 'lax',
+    maxAge: 60 * 60 * 1000,
+  });
+}
 
 const toFileMeta = (f) => ({
   id: f.filename,                       
@@ -35,9 +60,41 @@ const toFileMeta = (f) => ({
   size: f.size
 });
 
+function authRequired(req, res, next) {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch(e) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
 const findTask = (id) => tasks.find(t => t.id === id);
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173',
+  credentials: true
+}));
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!(username && password)) return res.status(400).json({ error: 'Missing credentials' });
+
+  const user = users.get(username);
+  if(!(await bcrypt.compare(password, user?.passwordHash))) return res.status(401).json({ error: 'Invalid credentials' });
+
+  issueTokenCookie(res, { sub: user.id, username: user.username });
+  return res.status(204).end()
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: false, sameSite: 'lax' });
+  return res.status(204).end();
+})
+
+app.use('/api/tasks', authRequired);
 
 app.get('/api/tasks', (req, res) => {
   const raw = (req.query.status || 'all').toLowerCase();
