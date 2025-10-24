@@ -28,15 +28,9 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 8 }
 });
 
-let tasks = [];
 let nextId = 1;
 
 const users = new Map();
-(async () => {
-  const hash = await bcrypt.hash('admin', 10);
-  users.set('admin', { id: '1', username: 'admin', passwordHash: hash });
-  users.set('john', { id: '2', username: 'john', passwordHash: hash });
-})();
 
 const ALLOWED_STATUS = new Set(['todo', 'inprogress', 'done']);
 const OK_FILTER = new Set(['all', ...ALLOWED_STATUS]);
@@ -95,6 +89,20 @@ app.post('/api/auth/logout', (req, res) => {
   return res.status(204).end();
 })
 
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!(username && password)) return res.status(400).json({ error: 'Missing credentials' });
+  if ([...users.values()].some(u => u.username === username)) return res.status(409).json({ error: 'User already exists' });
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  const uid = 'u_' + Date.now();
+  const user = { id: uid, username, passwordHash, tasks: [] };
+  users.set(uid, user);
+
+  issueTokenCookie(res, { sub: user.id, username: user.username });
+  return res.status(201).end();
+});
+
 app.get('/api/auth/me', authRequired, (req, res) => {
   res.status(200).json({ id: req.user.sub, username: req.user.username });
 });
@@ -102,6 +110,8 @@ app.get('/api/auth/me', authRequired, (req, res) => {
 app.use('/api/tasks', authRequired);
 
 app.get('/api/tasks', (req, res) => {
+  const user = users.get(req.user.sub);
+  const tasks = user.tasks || [];
   const raw = (req.query.status || 'all').toLowerCase();
   const filter = OK_FILTER.has(raw) ? raw : 'all';
   const list = filter === 'all' ? tasks : tasks.filter(t => t.status === filter);
@@ -110,7 +120,7 @@ app.get('/api/tasks', (req, res) => {
 
 app.get('/api/tasks/:id', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  const task = findTask(id);
+  const task = users.get(req.user.sub).tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   res.status(200).json(task);
 });
@@ -121,20 +131,20 @@ app.post('/api/tasks', upload.array('files'), (req, res) => {
 
   const status = ALLOWED_STATUS.has(req.body.status) ? req.body.status : 'todo';
   const dueDate = typeof req.body.dueDate === 'string' ? req.body.dueDate.trim() : '';
-
   const files = (req.files ?? []).map(toFileMeta);
 
-  const task = { id: nextId++, title, status, dueDate, files };
-  tasks.push(task);
+  let user = users.get(req.user.sub);
+  task_id = user.tasks.length + 1;
+  const task = { id: task_id, title, status, dueDate, files };
+  user.tasks.push(task);
 
   res.set('Location', `/api/tasks/${task.id}`);
   res.status(201).json(task); // 201 Created
 });
 
-// PUT /api/tasks/:id — update (JSON)
 app.put('/api/tasks/:id', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  const task = findTask(id);
+  const task = users.get(req.user.sub).tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   const { title, status, dueDate } = req.body || {};
