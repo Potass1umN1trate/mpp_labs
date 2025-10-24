@@ -65,6 +65,7 @@ function authRequired(req, res, next) {
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    console.log('Authenticated user:', req.user);
     next();
   } catch(e) {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -93,6 +94,10 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: false, sameSite: 'lax' });
   return res.status(204).end();
 })
+
+app.get('/api/auth/me', authRequired, (req, res) => {
+  res.status(200).json({ id: req.user.sub, username: req.user.username });
+});
 
 app.use('/api/tasks', authRequired);
 
