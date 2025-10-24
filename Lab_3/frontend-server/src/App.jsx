@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import TaskItem from "./TaskItem";
 
-// const { useState, useEffect, useRef } = React;
 const apiServer = "http://localhost:3001";
 
 async function api(url, opts = {}) {
