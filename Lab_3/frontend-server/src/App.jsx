@@ -69,6 +69,24 @@ export default function App() {
     }
   }
 
+  async function doRegister(e) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api(`${apiServer}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      setNeedLogin(false);
+      setUsername("");
+      setPassword("");
+      await loadTasks();
+    } catch (err) {
+      setError(err.message || "Registration failed");
+    }
+  }
+
   async function createTask(e) {
     e.preventDefault();
     const fd = new FormData();
@@ -110,15 +128,18 @@ export default function App() {
       <h1>SPA Tasks (React + REST)</h1>
       {error && <p>Error: {error}</p>}
 
-      {needLogin ? 
-        <form onSubmit={doLogin}>
-          <h2>Login</h2>
-          <label> Username: <input value={username} onChange={(e) => setUsername(e.target.value)} /> 
-          </label>
-          <label> Password: <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
-          <button type="submit">Login</button>
-        </form>
+      {needLogin ?
+          <form onSubmit={doLogin}>
+            <h2>Login</h2>
+            <label> Username: <input value={username} onChange={(e) => setUsername(e.target.value)} /> 
+            </label>
+            <label> Password: <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+              <button type="submit">Login</button>
+              <button type="button" onClick={doRegister}>Register</button>
+            </div>
+          </form>
        : 
         <div>
           <div>

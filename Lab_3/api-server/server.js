@@ -76,12 +76,13 @@ app.use(cors({
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!(username && password)) return res.status(400).json({ error: 'Missing credentials' });
-
-  const user = users.get(username);
-  if(!(await bcrypt.compare(password, user?.passwordHash))) return res.status(401).json({ error: 'Invalid credentials' });
-
-  issueTokenCookie(res, { sub: user.id, username: user.username });
-  return res.status(204).end()
+  try {
+    issueTokenCookie(res, { sub: ([...users.values()].find(u => u.username === username)).id, username: username });
+    return res.status(204).end()
+  } catch(e) {
+    console.log(e)
+    return res.status(401).json({ error: 'Wrong credentials' })
+  }
 })
 
 app.post('/api/auth/logout', (req, res) => {
@@ -158,6 +159,7 @@ app.put('/api/tasks/:id', (req, res) => {
 // DELETE /api/tasks/:id — delete
 app.delete('/api/tasks/:id', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
+  tasks = users.get(req.users.sub);
   const exists = tasks.some(t => t.id === id);
   if (!exists) return res.status(404).json({ error: 'Task not found' });
   tasks = tasks.filter(t => t.id !== id);
@@ -167,7 +169,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 // POST /api/tasks/:id/files — attach files (multipart)
 app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  const task = findTask(id);
+  const task = users.get(req.user.sub).tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   const more = (req.files ?? []).map(toFileMeta);
@@ -179,7 +181,7 @@ app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
 
 app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  const task = findTask(id);
+  const task = users.get(req.user.sub).tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   const f = (task.files || []).find(x => x.id === req.params.fileId);
