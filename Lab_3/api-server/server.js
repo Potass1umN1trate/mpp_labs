@@ -57,16 +57,18 @@ const toFileMeta = (f) => ({
 function authRequired(req, res, next) {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: "Unauthorized" });
+
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    console.log('Authenticated user:', req.user);
+    const payload = jwt.verify(token, JWT_SECRET);
+    user = users.get(payload.sub);
+    if(!user) return res.status(401).json({ error: "Session invalid. Please login again." });
+    console.log('Authenticated user:', user);
+    req.user = payload;
     next();
   } catch(e) {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
-
-const findTask = (id) => tasks.find(t => t.id === id);
 
 app.use(cors({
   origin: 'http://localhost:5173',
@@ -159,7 +161,7 @@ app.put('/api/tasks/:id', (req, res) => {
 // DELETE /api/tasks/:id — delete
 app.delete('/api/tasks/:id', (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  tasks = users.get(req.users.sub);
+  tasks = users.get(req.users.sub).tasks;
   const exists = tasks.some(t => t.id === id);
   if (!exists) return res.status(404).json({ error: 'Task not found' });
   tasks = tasks.filter(t => t.id !== id);
