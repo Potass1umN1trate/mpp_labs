@@ -1,233 +1,362 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const multer = require('multer');
 const cors = require('cors');
-const cookieParser = require('cookie-parser');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const { findUserByUsername, findUserByUserId, createUser } = require('./users.repo');
-const { createTask, getTaskOwned, updateTask, deleteTask, addFiles, listFiles, getFileOwned, listTasks } = require('./tasks.repo');
-const { type } = require('os');
+const crypto = require('crypto');
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-me";
-const JWT_TTL = '1h';
-const COOKIE_NAME = 'JWT';
+const { findUserByUsername, findUserByUserId, createUser } = require('./users.repo');
+const {
+  createTask,
+  listTasks,
+  getTaskOwned,
+  updateTask,
+  deleteTask,
+  addFiles,
+  listFiles,
+  getFileOwned,
+} = require('./tasks.repo');
 
 const app = express();
+const httpServer = http.createServer(app);
 
-app.use(express.json());
-app.use(cookieParser());
+const sessions = new Map(); 
 
-const publicDir = path.join(__dirname, 'public');
-app.use('/public', express.static(publicDir));
+const { Server } = require('socket.io');
+const io = new Server(httpServer, {
+  cors: {
+    origin: 'http://localhost:5173',
+  },
+});
 
+// ---------- UPLOADS ----------
 const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-app.use('/uploads', express.static(uploadDir)); 
-
-const upload = multer({
-  dest: uploadDir,
-  limits: { fileSize: 10 * 1024 * 1024, files: 8 }
-});
-
-let nextId = 1;
-
-const users = new Map();
-
-const ALLOWED_STATUS = new Set(['todo', 'inprogress', 'done']);
-const OK_FILTER = new Set(['all', ...ALLOWED_STATUS]);
-
-function issueTokenCookie(res, payload) {
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL });
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: false,
-    samesite: 'lax',
-    maxAge: 60 * 60 * 1000,
-    path: '/',
-  });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const toFileMeta = (f) => ({
-  id: f.filename,                       
-  originalname: f.originalname,         
-  filename: f.filename,                 
-  path: `/uploads/${f.filename}`,       
-  mimetype: f.mimetype,
-  size: f.size
+const storage = multer.diskStorage({
+  destination(req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename(req, file, cb) {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, unique + path.extname(file.originalname));
+  },
 });
+const upload = multer({ storage });
 
-function authRequired(req, res, next) {
-  const token = req.cookies?.[COOKIE_NAME];
-  if (!token) return res.status(401).json({ error: "Unauthorized" });
+// ---------- EXPRESS MIDDLEWARE ----------
+app.use(
+  cors({
+    origin: 'http://localhost:5173',
+  }),
+);
+app.use(express.json());
+app.use('/uploads', express.static(uploadDir));
 
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    user = findUserByUserId(payload.sub);
-    if(!user) return res.status(401).json({ error: "Session invalid. Please login again." });
-    console.log('Authenticated user:', user);
-    req.user = { id: user.id, username: user.username };
-    next();
-  } catch(e) {
-    console.log(e);
-    return res.status(401).json({ error: "Invalid or expired token" });
+// ---------- FILES HTTP API (оставили через HTTP ради простоты) ----------
+
+// загрузка файлов к задаче
+app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
+  const taskId = Number.parseInt(req.params.id, 10);
+  const token = req.query.token;
+
+  // 1) Определяем пользователя по токену сессии
+  if (!token || !sessions.has(token)) {
+    return res.status(401).json({ error: 'Unauthorized (no or invalid session token)' });
   }
-}
 
-app.use(cors({
-  origin: 'http://localhost:5173',
-  credentials: true
-}));
+  const userId = sessions.get(token);
 
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!(username && password)) return res.status(400).json({ error: 'Missing credentials' });
-  try {
-    const user = findUserByUsername(username);
-    issueTokenCookie(res, { sub: user.id, username: user.username });
-    return res.status(204).end()
-  } catch(e) {
-    console.log(e)
-    return res.status(401).json({ error: 'Wrong credentials' })
+  // 2) Проверяем, что задача принадлежит этому пользователю
+  const task = getTaskOwned(taskId, userId);
+  if (!task) {
+    return res.status(404).json({ error: 'Task not found or not owned by user' });
   }
-})
 
-app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: false, sameSite: 'lax' });
-  return res.status(204).end();
-})
-
-app.post('/api/auth/register', async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!(username && password)) return res.status(400).json({ error: 'Missing credentials' });
-  if (findUserByUsername(username)) return res.status(409).json({ error: 'User already exists' });
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const uid = 'u_' + Date.now();
-  const user = createUser(uid, username, passwordHash)
-  issueTokenCookie(res, { sub: user.id, username: user.username });
-  return res.status(201).end();
-});
-
-app.get('/api/auth/me', authRequired, (req, res) => {
-  res.status(200).json({ id: req.user.sub, username: req.user.username });
-});
-
-app.use('/api/tasks', authRequired);
-
-app.get('/api/tasks', (req, res) => {
-  const raw = (req.query.status || 'all').toLowerCase();
-  const filter = OK_FILTER.has(raw) ? raw : 'all';
-  const list = listTasks(req.user.id, filter)
-  const withFiles = list.map(t => {
-    return {
-      id: t.id,
-      title: t.title,
-      status: t.status,
-      dueDate: t.due_date || null,
-      files: listFiles(t.id)
-    }
-  })
-  res.status(200).json(withFiles);
-});
-
-app.get('/api/tasks/:id', (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  const task = getTaskOwned(id, req.user.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  const files = listFiles(id);
-  res.status(200).json({
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    dueDate: t.due_date || null,
-    files
-  });
-});
-
-app.post('/api/tasks', upload.array('files'), (req, res) => {
-  const title = (req.body.title || '').trim();
-  if (!title) return res.status(400).json({ error: 'title is required' });
-
-  const status = ALLOWED_STATUS.has(req.body.status) ? req.body.status : 'todo';
-  const dueDate = typeof req.body.dueDate === 'string' ? req.body.dueDate.trim() : null;
-  console.log(dueDate);
-  const task = createTask(req.user.id, { title: title, status: status, duedate: dueDate });
-  console.log('Task is :');
-  console.log(task);
-  const files = (req.files ?? []).map(f => ({
-    id: f.filename,
+  // 3) Сохраняем файлы
+  const toSave = (req.files || []).map((f) => ({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     originalname: f.originalname,
     filename: f.filename,
     path: `/uploads/${f.filename}`,
     mimetype: f.mimetype,
-    size: f.size
+    size: f.size,
   }));
-  if (files.length) addFiles(task.id, files);
-  const attached = listFiles(task.id);
-  res.set('Location', `/api/tasks/${task.id}`);
-  res.status(201).json({
-    id: task.id,
-    title: task.title,
-    status: task.status,
-    dueDate: task.due_date || null,
-    files: attached
-  });
+
+  const saved = addFiles(taskId, toSave);
+
+  // 4) Пушим свежий список задач этому пользователю по WebSocket
+  const tasks = buildTasksForUser(userId, 'all');
+  io.to(userId).emit('tasks:updated', { tasks });
+
+  // 5) Отдаём HTTP-ответ (чисто формальность)
+  return res.status(201).json(saved);
 });
 
-app.put('/api/tasks/:id', (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  const task = getTaskOwned(id, req.user.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  const { title, status, dueDate } = req.body || {};
-  const safeStatus = (typeof status === 'string' && ALLOWED_STATUS.has(status)) ? status : undefined;
-  const safeTitle = (typeof title === 'string' && title.trim()) ? title.trim() : undefined;
-  const safeDate = (typeof dueDate === 'string' && dueDate.trim()) ? dueDate.trim() : undefined;
-
-  const updated = updateTask(id, req.user.id, { title: safeTitle, status: safeStatus, dueDate: safeDate });
-
-  res.status(200).json(updated);
-});
-
-// DELETE /api/tasks/:id — delete
-app.delete('/api/tasks/:id', (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  const ok = deleteTask(id, req.user.id);
-  if (!ok) return res.status(404).json({ error: 'Task not found' });
-  res.status(204).end(); // No Content
-});
-
-// POST /api/tasks/:id/files — attach files (multipart)
-app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  const task = getTaskOwned(id, req.user.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-
-  const more = (req.files ?? []).map(f => ({
-    id: f.filename,
-    originalname: f.originalname,
-    filename: f.filename,
-    path: `/uploads/&{f.filename}`,
-    mimetype: f.mimetype,
-    size: f.size
-  }));
-  const files = addFiles(id, more);
-  res.status(200).json({ files: files });
-});
-
+// скачивание файла (опционально, можно использовать прямую ссылку /uploads/...)
 app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
+  const taskId = Number.parseInt(req.params.id, 10);
   const fileId = req.params.fileId;
-  const file = getFileOwned(fileId, id, req.user.id);
-  if (!file) return res.status(404).json({ error: 'File not found' });
+
+  // В упрощённом варианте ЛР не проверяем владельца файла,
+  // просто ищем файл среди файлов задачи.
+  const files = listFiles(taskId);
+  const file = files.find((f) => String(f.id) === String(fileId));
+
+  if (!file) {
+    return res.status(404).json({ error: 'File not found' });
+  }
 
   res.download(path.join(uploadDir, file.filename), file.originalname);
 });
 
-//app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
-//app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+// ---------- HELPERS FOR TASKS ----------
+const ALLOWED_FILTERS = new Set(['all', 'todo', 'inprogress', 'done']);
 
+function buildTasksForUser(userId, filter = 'all') {
+  const f = (filter || 'all').toLowerCase();
+  const realFilter = ALLOWED_FILTERS.has(f) ? f : 'all';
+
+  const rows = listTasks(userId, realFilter);
+  return rows.map((t) => ({
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    dueDate: t.due_date,
+    files: listFiles(t.id),
+  }));
+}
+
+// ---------- SOCKET.IO ----------
+
+io.on('connection', (socket) => {
+  console.log('Client connected', socket.id);
+
+  // --- AUTH: register ---
+  socket.on('auth:register', async (payload, cb) => {
+    try {
+      const { username, password } = payload || {};
+      if (!username || !password) {
+        return cb && cb({ ok: false, error: 'username and password required' });
+      }
+
+      if (findUserByUsername(username)) {
+        return cb && cb({ ok: false, error: 'user already exists' });
+      }
+
+      const id = `u_${Date.now()}`;
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = createUser(id, username, passwordHash);
+
+      socket.user = { id: user.id, username: user.username };
+      socket.join(user.id);
+
+      cb && cb({
+        ok: true,
+        user: { id: user.id, username: user.username },
+        token: sessionId,
+      });
+
+      const tasks = buildTasksForUser(user.id, 'all');
+      socket.emit('tasks:updated', { tasks });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'register failed' });
+    }
+  });
+
+  // --- AUTH: login ---
+  socket.on('auth:login', async (payload, cb) => {
+    try {
+      const { username, password } = payload || {};
+      if (!username || !password) {
+        return cb && cb({ ok: false, error: 'username and password required' });
+      }
+
+      const user = findUserByUsername(username);
+      if (!user) {
+        return cb && cb({ ok: false, error: 'invalid username or password' });
+      }
+
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) {
+        return cb && cb({ ok: false, error: 'invalid username or password' });
+      }
+
+      socket.user = { id: user.id, username: user.username };
+      socket.join(user.id);
+
+      const sessionId = crypto.randomUUID();
+      sessions.set(sessionId, user.id);
+
+      cb && cb({
+        ok: true,
+        user: { id: user.id, username: user.username },
+        token: sessionId,
+      });
+
+      const tasks = buildTasksForUser(user.id, 'all');
+      socket.emit('tasks:updated', { tasks });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'login failed' });
+    }
+  });
+
+  socket.on('auth:resume', (payload, cb) => {
+  try {
+    const { token } = payload || {};
+    if (!token) return cb && cb({ ok: false, error: 'no token' });
+
+    const userId = sessions.get(token);
+    if (!userId) return cb && cb({ ok: false, error: 'invalid session' });
+
+    const user = findUserByUserId(userId);
+    if (!user) return cb && cb({ ok: false, error: 'user not found' });
+
+    socket.user = { id: user.id, username: user.username };
+    socket.join(user.id);
+
+    cb && cb({
+      ok: true,
+      user: { id: user.id, username: user.username },
+    });
+
+    const tasks = buildTasksForUser(user.id, 'all');
+    socket.emit('tasks:updated', { tasks });
+  } catch (err) {
+    console.error(err);
+    cb && cb({ ok: false, error: 'resume failed' });
+  }
+});
+
+  // --- AUTH: logout ---
+  socket.on('auth:logout', (cb) => {
+    if (socket.user) {
+      socket.leave(socket.user.id);
+      socket.user = null;
+    }
+    cb && cb({ ok: true });
+  });
+
+  // --- TASKS:list ---
+  socket.on('tasks:list', (payload, cb) => {
+    try {
+      if (!socket.user) {
+        return cb && cb({ ok: false, error: 'unauthorized' });
+      }
+      const filter = payload?.filter || 'all';
+      const tasks = buildTasksForUser(socket.user.id, filter);
+      cb && cb({ ok: true, tasks });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'failed to load tasks' });
+    }
+  });
+
+  // --- TASKS:create ---
+  socket.on('tasks:create', (payload, cb) => {
+    try {
+      if (!socket.user) {
+        return cb && cb({ ok: false, error: 'unauthorized' });
+      }
+      const { title, status = 'todo', dueDate = null } = payload || {};
+      if (!title) {
+        return cb && cb({ ok: false, error: 'title is required' });
+      }
+
+      const task = createTask(socket.user.id, {
+        title,
+        status,
+        duedate: dueDate || null,
+      });
+
+      const tasks = buildTasksForUser(socket.user.id, 'all');
+      io.to(socket.user.id).emit('tasks:updated', { tasks });
+
+      cb && cb({ ok: true, task });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'failed to create task' });
+    }
+  });
+
+  // --- TASKS:update ---
+  socket.on('tasks:update', (payload, cb) => {
+    try {
+      if (!socket.user) {
+        return cb && cb({ ok: false, error: 'unauthorized' });
+      }
+      const { id, update } = payload || {};
+      if (!id) {
+        return cb && cb({ ok: false, error: 'task id is required' });
+      }
+
+      const taskId = Number.parseInt(id, 10);
+      const existing = getTaskOwned(taskId, socket.user.id);
+      if (!existing) {
+        return cb && cb({ ok: false, error: 'task not found' });
+      }
+
+      const patch = {
+        title: update?.title ?? null,
+        status: update?.status ?? null,
+        dueDate: update?.dueDate ?? null,
+      };
+
+      updateTask(taskId, socket.user.id, patch);
+
+      const tasks = buildTasksForUser(socket.user.id, 'all');
+      io.to(socket.user.id).emit('tasks:updated', { tasks });
+
+      cb && cb({ ok: true });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'failed to update task' });
+    }
+  });
+
+  // --- TASKS:delete ---
+  socket.on('tasks:delete', (payload, cb) => {
+    try {
+      if (!socket.user) {
+        return cb && cb({ ok: false, error: 'unauthorized' });
+      }
+      const { id } = payload || {};
+      if (!id) {
+        return cb && cb({ ok: false, error: 'task id is required' });
+      }
+
+      const taskId = Number.parseInt(id, 10);
+      const existing = getTaskOwned(taskId, socket.user.id);
+      if (!existing) {
+        return cb && cb({ ok: false, error: 'task not found' });
+      }
+
+      deleteTask(taskId, socket.user.id);
+
+      const tasks = buildTasksForUser(socket.user.id, 'all');
+      io.to(socket.user.id).emit('tasks:updated', { tasks });
+
+      cb && cb({ ok: true });
+    } catch (err) {
+      console.error(err);
+      cb && cb({ ok: false, error: 'failed to delete task' });
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('Client disconnected', socket.id, reason);
+  });
+});
+
+// ---------- START ----------
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`http://localhost:${PORT}`));
+httpServer.listen(PORT, () => {
+  console.log(`HTTP + WebSocket server running on http://localhost:${PORT}`);
+});
