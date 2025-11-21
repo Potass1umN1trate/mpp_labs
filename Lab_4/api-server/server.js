@@ -23,6 +23,7 @@ const app = express();
 const httpServer = http.createServer(app);
 
 const sessions = new Map(); 
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1 час
 
 const { Server } = require('socket.io');
 const io = new Server(httpServer, {
@@ -30,6 +31,20 @@ const io = new Server(httpServer, {
     origin: 'http://localhost:5173',
   },
 });
+
+
+function getValidSessionUserId(token) {
+  if (!token) return null;
+
+  const record = sessions.get(token);
+  if (!record) return null;
+
+  if (Date.now() > record.expiresAt) {
+    sessions.delete(token);
+    return null;
+  }
+  return record.userId;
+}
 
 // ---------- UPLOADS ----------
 const uploadDir = path.join(__dirname, 'uploads');
@@ -64,12 +79,10 @@ app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
   const taskId = Number.parseInt(req.params.id, 10);
   const token = req.query.token;
 
-  // 1) Определяем пользователя по токену сессии
-  if (!token || !sessions.has(token)) {
-    return res.status(401).json({ error: 'Unauthorized (no or invalid session token)' });
+  const userId = getValidSessionUserId(token);
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized (invalid or expired session)' });
   }
-
-  const userId = sessions.get(token);
 
   // 2) Проверяем, что задача принадлежит этому пользователю
   const task = getTaskOwned(taskId, userId);
@@ -98,7 +111,7 @@ app.post('/api/tasks/:id/files', upload.array('files'), (req, res) => {
 });
 
 
-// скачивание файла (опционально, можно использовать прямую ссылку /uploads/...)
+// скачивание файла 
 app.get('/api/tasks/:id/files/:fileId/download', (req, res) => {
   const taskId = Number.parseInt(req.params.id, 10);
   const fileId = req.params.fileId;
@@ -156,6 +169,12 @@ io.on('connection', (socket) => {
       socket.user = { id: user.id, username: user.username };
       socket.join(user.id);
 
+      const sessionId = crypto.randomUUID();
+      sessions.set(sessionId, {
+        userId: user.id,
+        expiresAt: Date.now() + SESSION_TTL_MS,
+      });
+
       cb && cb({
         ok: true,
         user: { id: user.id, username: user.username },
@@ -192,7 +211,10 @@ io.on('connection', (socket) => {
       socket.join(user.id);
 
       const sessionId = crypto.randomUUID();
-      sessions.set(sessionId, user.id);
+      sessions.set(sessionId, {
+        userId: user.id,
+        expiresAt: Date.now() + SESSION_TTL_MS,
+      });
 
       cb && cb({
         ok: true,
@@ -213,8 +235,10 @@ io.on('connection', (socket) => {
     const { token } = payload || {};
     if (!token) return cb && cb({ ok: false, error: 'no token' });
 
-    const userId = sessions.get(token);
-    if (!userId) return cb && cb({ ok: false, error: 'invalid session' });
+    const userId = getValidSessionUserId(token);
+    if (!userId) {
+      return cb && cb({ ok: false, error: 'invalid or expired session' });
+    }
 
     const user = findUserByUserId(userId);
     if (!user) return cb && cb({ ok: false, error: 'user not found' });

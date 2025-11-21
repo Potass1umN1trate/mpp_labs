@@ -29,9 +29,7 @@ export default function App() {
 
   // ---- init socket.io connection ----
   useEffect(() => {
-    const s = io(apiServer, {
-      // чистый сокет, без cookie/JWT
-    });
+    const s = io(apiServer, {});
 
     s.on("connect", () => {
       setConnected(true);
@@ -191,7 +189,6 @@ export default function App() {
       const input = createFilesRef.current;
       const files = input?.files || [];
 
-      // файлы всё ещё через HTTP
       if (files.length > 0 && created?.id) {
         try {
           await uploadFiles(created.id, files);
@@ -205,7 +202,6 @@ export default function App() {
       setTitle("");
       setStatus("todo");
       setDueDate("");
-      // актуальный список придёт через tasks:updated
     });
   }
 
@@ -261,8 +257,6 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || res.statusText || "File upload failed");
     }
-
-    // НИЧЕГО дополнительно не делаем: сервер сам пушит tasks:updated
   }
 
 
